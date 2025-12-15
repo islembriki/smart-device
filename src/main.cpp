@@ -12,14 +12,12 @@ const char* topic_sub = "INSAT/tunisia/project2025";
 // --- PINS ---
 #define DHTPIN 15
 #define DHTTYPE DHT22
-#define BUZZER_PIN 18  // <--- NEW: Buzzer Pin
+#define BUZZER_PIN 18
 
-// LEDs: [0]=Red, [1]=Yellow, [2]=Purple, [3]=Green, [4]=Blue/Cyan
+// LEDs
 int leds[] = {17, 27, 22, 23, 19}; 
 
-// --- TEMPERATURE SETTINGS ---
-// Wokwi defaults to 24°C. We set the limit to 25°C. 
-// If you slide the sensor to 25.1°C or higher -> ALARM!
+// Limit for Alarm
 float tempLimit = 25.0; 
 
 WiFiClient espClient;
@@ -28,6 +26,8 @@ DHT dht(DHTPIN, DHTTYPE);
 Preferences preferences; 
 
 unsigned long lastActivity = 0;
+unsigned long lastTempCheck = 0; // <--- NEW TIMER
+float currentTemp = 0.0;         // Store the temp here
 
 void setup_wifi() {
   delay(10);
@@ -50,27 +50,19 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message received: ");
   Serial.println(message);
 
-  // 1. Reset LEDs
+  // Reset LEDs
   for(int i=0; i<5; i++) digitalWrite(leds[i], LOW);
 
-  // 2. Activate based on Command
-  if (message == "STOP") {
-    digitalWrite(leds[0], HIGH); // Red
-  }
-  else if (message == "START") {
-    digitalWrite(leds[3], HIGH); // Green
-  }
+  // Commands
+  if (message == "STOP") digitalWrite(leds[0], HIGH);
+  else if (message == "START") digitalWrite(leds[3], HIGH);
   else if (message == "ALARM") {
     digitalWrite(leds[0], HIGH);
     digitalWrite(leds[1], HIGH);
     digitalWrite(leds[2], HIGH);
   }
-  else if (message == "FAN_ON") {
-     digitalWrite(leds[4], HIGH); // Cyan
-  }
-  else if (message == "CONFIRM") {
-     digitalWrite(leds[2], HIGH); // Purple
-  }
+  else if (message == "FAN_ON") digitalWrite(leds[4], HIGH);
+  else if (message == "CONFIRM") digitalWrite(leds[2], HIGH);
 
   // SAVE TO FLASH
   preferences.begin("my-app", false);
@@ -81,13 +73,10 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void setup() {
   Serial.begin(115200);
   
-  // Setup LEDs
   for(int i=0; i<5; i++) {
     pinMode(leds[i], OUTPUT);
     digitalWrite(leds[i], LOW);
   }
-
-  // Setup Buzzer
   pinMode(BUZZER_PIN, OUTPUT);
   
   dht.begin();
@@ -100,46 +89,39 @@ void setup() {
 }
 
 void loop() {
-  // 1. READ TEMPERATURE FIRST (Safety Priority)
-  float t = dht.readTemperature();
-  
-  // --- SAFETY MONITOR ---
-  if (t > tempLimit) {
-    // If temp is too high, IGNORE MQTT and Start Alarm
-    Serial.print("🔥 FIRE ALERT! Temp: ");
-    Serial.println(t);
-
-    // Flashing Effect (Police Strobe)
-    for(int i=0; i<5; i++) digitalWrite(leds[i], HIGH); // All ON
-    tone(BUZZER_PIN, 1000); // Beeeep
-    delay(200); // Wait
-
-    for(int i=0; i<5; i++) digitalWrite(leds[i], LOW); // All OFF
-    noTone(BUZZER_PIN); // Silence
-    delay(200); // Wait
-
-    return; // <--- This SKIPs the rest of the loop (No MQTT processing during fire)
+  // --- 1. SMART TEMP READING (Only once every 1 second) ---
+  if (millis() - lastTempCheck > 1000) { 
+    currentTemp = dht.readTemperature();
+    lastTempCheck = millis(); // Reset timer
+    
+    // Debug print
+    Serial.print("Temp Update: ");
+    Serial.println(currentTemp);
   }
 
-  // 2. NORMAL MODE (Only runs if Temp is safe)
+  // --- 2. SAFETY CHECK ---
+  if (currentTemp > tempLimit) {
+    // FIRE ALARM LOGIC
+    Serial.println("🔥 ALARM! FIRE!");
+    for(int i=0; i<5; i++) digitalWrite(leds[i], HIGH); 
+    tone(BUZZER_PIN, 1000); 
+    delay(200); // Short delay is okay here because it's an emergency
+    for(int i=0; i<5; i++) digitalWrite(leds[i], LOW); 
+    noTone(BUZZER_PIN); 
+    delay(200);
+    return; // Stop here, ignore MQTT until fire is gone
+  }
+
+  // --- 3. NORMAL MQTT LISTENING ---
+  // This runs very fast now because we aren't reading the sensor every time!
   if (!client.connected()) {
     if (client.connect("ESP32_Tunisia_Final_V1")) { 
       client.subscribe(topic_sub);
-      Serial.println("MQTT Connected!");
     }
   }
   client.loop();
 
-  // Print Temp to console every 5 seconds for debugging
-  static unsigned long lastSensor = 0;
-  if(millis() - lastSensor > 5000) {
-    Serial.print("Current Temp: "); 
-    Serial.print(t); 
-    Serial.println(" C (Status: OK)");
-    lastSensor = millis();
-  }
-
-  // ENERGY SAVING
+  // --- 4. ENERGY SAVING ---
   if (millis() - lastActivity > 60000) {
     Serial.println("Sleep Mode Activated...");
     esp_deep_sleep_start();
