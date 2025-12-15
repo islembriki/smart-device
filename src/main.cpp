@@ -1,3 +1,4 @@
+#include <Arduino.h> // Keep this line for VS Code
 #include <WiFi.h>
 #include <PubSubClient.h>
 #include <DHT.h>
@@ -12,8 +13,7 @@ const char* topic_sub = "INSAT/tunisia/project2025";
 // --- PINS ---
 #define DHTPIN 15
 #define DHTTYPE DHT22
-
-// LEDs: [0]=Red, [1]=Yellow, [2]=Purple, [3]=Green, [4]=Blue/Cyan
+// LEDs: [0]=Red, [1]=Orange, [2]=Magenta, [3]=Green, [4]=Cyan
 int leds[] = {17, 27, 22, 23, 19}; 
 
 WiFiClient espClient;
@@ -22,51 +22,57 @@ DHT dht(DHTPIN, DHTTYPE);
 Preferences preferences; 
 
 unsigned long lastActivity = 0;
+unsigned long sleepDuration = 60000; 
 
 void setup_wifi() {
   delay(10);
-  Serial.println("Connecting to WiFi...");
+  Serial.println("Connexion WiFi...");
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("WiFi connected");
+  Serial.println("Connecté!");
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
   lastActivity = millis(); 
 
   String message;
-  for (int i = 0; i < length; i++) {
-    message += (char)payload[i];
-  }
-  Serial.print("Message received: ");
-  Serial.println(message);
+  for (int i = 0; i < length; i++) message += (char)payload[i];
+  Serial.print("Reçu: "); Serial.println(message);
 
-  // 1. Reset LEDs
-  for(int i=0; i<5; i++) digitalWrite(leds[i], LOW);
+  // --- ACTIONS ---
+  for(int i=0; i<5; i++) digitalWrite(leds[i], LOW); // Reset all
 
-  // 2. Activate based on Command
   if (message == "STOP") {
-    digitalWrite(leds[0], HIGH); // Red
-  }
-  else if (message == "START") {
-    digitalWrite(leds[3], HIGH); // Green
+      digitalWrite(leds[0], HIGH); // Rouge: Arret Urgence
   }
   else if (message == "ALARM") {
-    digitalWrite(leds[0], HIGH);
-    digitalWrite(leds[1], HIGH);
-    digitalWrite(leds[2], HIGH);
-  }
-  else if (message == "FAN_ON") {
-     digitalWrite(leds[4], HIGH); // Cyan
+      digitalWrite(leds[1], HIGH); // Orange: Avertissement
   }
   else if (message == "CONFIRM") {
-     digitalWrite(leds[2], HIGH); // Purple
+      digitalWrite(leds[2], HIGH); // Magenta: Bloquer Portes
+  }
+  else if (message == "START") {
+      digitalWrite(leds[3], HIGH); // Vert: Eclairage
+  }
+  else if (message == "FAN_ON") {
+      // NOTE: "FAN_ON" code means "Appel Assistance" now
+      digitalWrite(leds[4], HIGH); // Cyan: Appel Assistance
+  }
+  
+  // --- ADMIN SETTINGS ---
+  else if (message == "SET_LONG") {
+    sleepDuration = 120000;
+    Serial.println("Admin: Veille = 2 mins");
+  }
+  else if (message == "SET_SHORT") {
+    sleepDuration = 10000;
+    Serial.println("Admin: Veille = 10 secs");
   }
 
-  // SAVE TO FLASH
+  // Flash Memory Save
   preferences.begin("my-app", false);
   preferences.putString("last_cmd", message);
   preferences.end();
@@ -74,43 +80,34 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 void setup() {
   Serial.begin(115200);
-  
-  for(int i=0; i<5; i++) {
-    pinMode(leds[i], OUTPUT);
-    digitalWrite(leds[i], LOW);
-  }
-  
+  for(int i=0; i<5; i++) pinMode(leds[i], OUTPUT);
   dht.begin();
   setup_wifi();
-  
   client.setServer(mqtt_server, 1883);
   client.setCallback(callback);
-  
   lastActivity = millis();
 }
 
 void loop() {
   if (!client.connected()) {
-    if (client.connect("ESP32_Tunisia_Final_V1")) { 
+    if (client.connect("ESP32_Medical_Tunisia")) { 
       client.subscribe(topic_sub);
-      Serial.println("MQTT Connected!");
+      Serial.println("MQTT Prêt!");
     }
   }
   client.loop();
 
-  // READ SENSOR
+  // Sensor Read
   static unsigned long lastSensor = 0;
   if(millis() - lastSensor > 5000) {
     float t = dht.readTemperature();
-    Serial.print("Temp: "); 
-    Serial.print(t); 
-    Serial.println(" C");
+    Serial.print("Temp: "); Serial.println(t);
     lastSensor = millis();
   }
 
-  // ENERGY SAVING
-  if (millis() - lastActivity > 60000) {
-    Serial.println("Sleep Mode Activated...");
+  // Deep Sleep Logic
+  if (millis() - lastActivity > sleepDuration) {
+    Serial.println("Dodo...");
     esp_deep_sleep_start();
   }
 }
