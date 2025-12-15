@@ -7,15 +7,14 @@
 const char* ssid = "Wokwi-GUEST"; 
 const char* password = "";
 const char* mqtt_server = "broker.emqx.io";
-const char* topic_sub = "isima/tunisia/project2025"; 
+const char* topic_sub = "INSAT/tunisia/project2025"; 
 
-// --- PINS (YOUR ORIGINAL CONFIGURATION) ---
+// --- PINS ---
 #define DHTPIN 15
 #define DHTTYPE DHT22
 
-// Your specific pin list that works:
+// LEDs: [0]=Red, [1]=Yellow, [2]=Purple, [3]=Green, [4]=Blue/Cyan
 int leds[] = {17, 27, 22, 23, 19}; 
-// Assuming order: [0]=Red, [1]=Yellow, [2]=Purple, [3]=Green, [4]=Blue/Cyan
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -36,7 +35,7 @@ void setup_wifi() {
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  lastActivity = millis(); // Reset sleep timer because we got a command
+  lastActivity = millis(); 
 
   String message;
   for (int i = 0; i < length; i++) {
@@ -45,36 +44,29 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message received: ");
   Serial.println(message);
 
-  // --- LOGIC FOR NEW GESTURES ---
-  
-  // 1. Turn off all LEDs first (Reset state)
+  // 1. Reset LEDs
   for(int i=0; i<5; i++) digitalWrite(leds[i], LOW);
 
-  // 2. Activate based on AI Command
+  // 2. Activate based on Command
   if (message == "STOP") {
-    // Gesture: FIST -> RED LED (Emergency)
-    digitalWrite(leds[0], HIGH); 
+    digitalWrite(leds[0], HIGH); // Red
   }
   else if (message == "START") {
-    // Gesture: THUMBS UP -> GREEN LED (Production Active)
-    digitalWrite(leds[3], HIGH);
+    digitalWrite(leds[3], HIGH); // Green
   }
   else if (message == "ALARM") {
-    // Gesture: ROCK SIGN -> RED + YELLOW + PURPLE (Visual Alarm)
     digitalWrite(leds[0], HIGH);
     digitalWrite(leds[1], HIGH);
     digitalWrite(leds[2], HIGH);
   }
   else if (message == "FAN_ON") {
-     // Gesture: VICTORY/PEACE -> BLUE/CYAN LED (Ventilation)
-     digitalWrite(leds[4], HIGH);
+     digitalWrite(leds[4], HIGH); // Cyan
   }
   else if (message == "CONFIRM") {
-     // Gesture: OK SIGN -> PURPLE LED (System Check)
-     digitalWrite(leds[2], HIGH);
+     digitalWrite(leds[2], HIGH); // Purple
   }
 
-  // SAVE TO FLASH (Requirement: User Parameters/History)
+  // SAVE TO FLASH
   preferences.begin("my-app", false);
   preferences.putString("last_cmd", message);
   preferences.end();
@@ -83,7 +75,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void setup() {
   Serial.begin(115200);
   
-  // Initialize Your Pins
   for(int i=0; i<5; i++) {
     pinMode(leds[i], OUTPUT);
     digitalWrite(leds[i], LOW);
@@ -100,27 +91,26 @@ void setup() {
 
 void loop() {
   if (!client.connected()) {
-    if (client.connect("ESP32_Tunisia_Student_123")) { // Unique ID
+    if (client.connect("ESP32_Tunisia_Final_V1")) { 
       client.subscribe(topic_sub);
-      Serial.println("MQTT Connected! Waiting for gestures...");
+      Serial.println("MQTT Connected!");
     }
   }
   client.loop();
 
-  // READ SENSOR (Requirement: Acquisition)
+  // READ SENSOR
   static unsigned long lastSensor = 0;
   if(millis() - lastSensor > 5000) {
     float t = dht.readTemperature();
-    Serial.print("Sensor Status -> Temp: "); 
+    Serial.print("Temp: "); 
     Serial.print(t); 
     Serial.println(" C");
     lastSensor = millis();
   }
 
-  // ENERGY OPTIMIZATION (Requirement: Sleep)
-  // If no gesture received for 60 seconds, sleep
+  // ENERGY SAVING
   if (millis() - lastActivity > 60000) {
-    Serial.println("No gestures detected. Saving Energy...");
+    Serial.println("Sleep Mode Activated...");
     esp_deep_sleep_start();
   }
 }
