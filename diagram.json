@@ -33,7 +33,14 @@
       "attrs": { "color": "limegreen" }
     },
     { "type": "wokwi-led", "id": "led5", "top": -61.2, "left": 311, "attrs": { "color": "cyan" } },
-    { "type": "wokwi-dht22", "id": "dht1", "top": -105.3, "left": -34.2, "attrs": {} }
+    { "type": "wokwi-dht22", "id": "dht1", "top": -105.3, "left": -34.2, "attrs": {} },
+    {
+      "type": "wokwi-buzzer",
+      "id": "buzzer1",
+      "top": -144,
+      "left": 105.6,
+      "attrs": { "volume": "0.1" }
+    }
   ],
   "connections": [
     [ "esp:TX", "$serialMonitor:RX", "", [] ],
@@ -50,7 +57,9 @@
     [ "esp:GND.2", "led5:C", "black", [ "v0" ] ],
     [ "dht1:VCC", "esp:3V3", "red", [ "v0" ] ],
     [ "dht1:GND", "esp:GND.1", "black", [ "v0" ] ],
-    [ "dht1:SDA", "esp:15", "green", [ "v0" ] ]
+    [ "dht1:SDA", "esp:15", "green", [ "v0" ] ],
+    [ "buzzer1:2", "esp:18", "red", [ "v0" ] ],
+    [ "buzzer1:1", "esp:GND.1", "black", [ "v0" ] ]
   ],
   "dependencies": {}
 }

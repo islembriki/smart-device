@@ -12,9 +12,15 @@ const char* topic_sub = "INSAT/tunisia/project2025";
 // --- PINS ---
 #define DHTPIN 15
 #define DHTTYPE DHT22
+#define BUZZER_PIN 18  // <--- NEW: Buzzer Pin
 
 // LEDs: [0]=Red, [1]=Yellow, [2]=Purple, [3]=Green, [4]=Blue/Cyan
 int leds[] = {17, 27, 22, 23, 19}; 
+
+// --- TEMPERATURE SETTINGS ---
+// Wokwi defaults to 24°C. We set the limit to 25°C. 
+// If you slide the sensor to 25.1°C or higher -> ALARM!
+float tempLimit = 25.0; 
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -75,10 +81,14 @@ void callback(char* topic, byte* payload, unsigned int length) {
 void setup() {
   Serial.begin(115200);
   
+  // Setup LEDs
   for(int i=0; i<5; i++) {
     pinMode(leds[i], OUTPUT);
     digitalWrite(leds[i], LOW);
   }
+
+  // Setup Buzzer
+  pinMode(BUZZER_PIN, OUTPUT);
   
   dht.begin();
   setup_wifi();
@@ -90,6 +100,28 @@ void setup() {
 }
 
 void loop() {
+  // 1. READ TEMPERATURE FIRST (Safety Priority)
+  float t = dht.readTemperature();
+  
+  // --- SAFETY MONITOR ---
+  if (t > tempLimit) {
+    // If temp is too high, IGNORE MQTT and Start Alarm
+    Serial.print("🔥 FIRE ALERT! Temp: ");
+    Serial.println(t);
+
+    // Flashing Effect (Police Strobe)
+    for(int i=0; i<5; i++) digitalWrite(leds[i], HIGH); // All ON
+    tone(BUZZER_PIN, 1000); // Beeeep
+    delay(200); // Wait
+
+    for(int i=0; i<5; i++) digitalWrite(leds[i], LOW); // All OFF
+    noTone(BUZZER_PIN); // Silence
+    delay(200); // Wait
+
+    return; // <--- This SKIPs the rest of the loop (No MQTT processing during fire)
+  }
+
+  // 2. NORMAL MODE (Only runs if Temp is safe)
   if (!client.connected()) {
     if (client.connect("ESP32_Tunisia_Final_V1")) { 
       client.subscribe(topic_sub);
@@ -98,13 +130,12 @@ void loop() {
   }
   client.loop();
 
-  // READ SENSOR
+  // Print Temp to console every 5 seconds for debugging
   static unsigned long lastSensor = 0;
   if(millis() - lastSensor > 5000) {
-    float t = dht.readTemperature();
-    Serial.print("Temp: "); 
+    Serial.print("Current Temp: "); 
     Serial.print(t); 
-    Serial.println(" C");
+    Serial.println(" C (Status: OK)");
     lastSensor = millis();
   }
 
@@ -114,5 +145,3 @@ void loop() {
     esp_deep_sleep_start();
   }
 }
-
-
