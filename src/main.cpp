@@ -2,7 +2,7 @@
 #include <PubSubClient.h>
 #include <DHT.h>
 #include <Preferences.h>
-#include "esp32-hal-cpu.h" // Nécessaire pour l'économie d'énergie CPU
+#include "esp32-hal-cpu.h" 
 
 // --- SETTINGS ---
 const char* ssid = "Wokwi-GUEST"; 
@@ -18,10 +18,11 @@ const char* topic_sub = "INSAT/tunisia/project2025";
 // LEDs: [0]=Red, [1]=Yellow, [2]=Purple, [3]=Green, [4]=Blue/Cyan
 int leds[] = {17, 27, 22, 23, 19}; 
 
-// --- VARIABLES INTELLIGENTES (Modifiables via MQTT) ---
-float tempLimit = 25.0;              // Seuil d'alarme (défaut 25.0)
-unsigned long sleep_timeout = 60000; // Temps avant veille (défaut 60s)
-bool silent_mode = false;            // Mode silencieux (défaut Faux)
+// --- VARIABLES INTELLIGENTES ---
+float tempLimit = 25.0;              // Seuil d'alarme
+unsigned long sleep_timeout = 60000; // Temps avant veille (60s)
+bool silent_mode = false;            
+bool isSleeping = false;             // <--- STATE VARIABLE (Awake or Asleep)
 
 WiFiClient espClient;
 PubSubClient client(espClient);
@@ -43,13 +44,11 @@ void setup_wifi() {
     Serial.print(".");
   }
   Serial.println("WiFi connected");
-  
-  // ASTUCE 1: Réduire la puissance WiFi (Economie)
   WiFi.setTxPower(WIFI_POWER_11dBm); 
 }
 
 void callback(char* topic, byte* payload, unsigned int length) {
-  lastActivity = millis(); 
+  lastActivity = millis(); // Reset timer whenever a message arrives
 
   String message;
   for (int i = 0; i < length; i++) {
@@ -58,13 +57,29 @@ void callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("Message reçu: ");
   Serial.println(message);
 
-  // --- NOUVELLES COMMANDES ---
+  // --- 1. LOGIQUE DE REVEIL (SMART WAKE UP) ---
+  if (isSleeping) {
+    if (message == "START") {
+      isSleeping = false;
+      Serial.println("☀️ SYSTEME REVEILLE ! (Mode Normal Active)");
+      
+      // Petit signal visuel (Vert clignote une fois)
+      digitalWrite(leds[3], HIGH);
+      delay(500);
+      digitalWrite(leds[3], LOW);
+    } else {
+      Serial.println("💤 Ignoré : Le système est en veille (Faites 'START' pour réveiller)");
+    }
+    return; // On arrête ici si on était endormi
+  }
 
-  // 1. Couper le son à distance (tout en gardant l'alarme visuelle)
+  // --- 2. COMMANDES SYSTEME (Seulement si réveillé) ---
+
+  // Couper le son
   if (message == "SOUND:OFF") {
     silent_mode = true;
-    noTone(BUZZER_PIN); // Arrêt immédiat du son
-    Serial.println("🔇 Alarme rendue silencieuse");
+    noTone(BUZZER_PIN);
+    Serial.println("🔇 Mode Silencieux activé");
     return;
   }
   if (message == "SOUND:ON") {
@@ -73,28 +88,26 @@ void callback(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  // 2. Redémarrage à distance
+  // Reboot
   if (message == "REBOOT") {
     Serial.println("⚠️ REBOOT EN COURS...");
     delay(100);
     ESP.restart();
   }
 
-  // 3. Changer seuil Température (Ex: SET_TEMP:30)
+  // Config Admin
   if (message.startsWith("SET_TEMP:")) {
     tempLimit = message.substring(9).toFloat();
     Serial.print("✅ Nouveau seuil Temp: "); Serial.println(tempLimit);
     return;
   }
-
-  // 4. Changer délai Veille (Ex: SET_TIME:30)
   if (message.startsWith("SET_TIME:")) {
     sleep_timeout = message.substring(9).toInt() * 1000;
     Serial.print("✅ Nouveau délai Veille: "); Serial.println(sleep_timeout);
     return;
   }
 
-  // --- GESTION DES GESTES (Uniquement si température normale) ---
+  // --- 3. GESTION DES GESTES (Si température normale) ---
   if (currentTemp <= tempLimit) {
     // Reset LEDs
     for(int i=0; i<5; i++) digitalWrite(leds[i], LOW);
@@ -102,9 +115,7 @@ void callback(char* topic, byte* payload, unsigned int length) {
     // Commandes Geste
     if (message == "STOP") digitalWrite(leds[0], HIGH);
     else if (message == "START") digitalWrite(leds[3], HIGH);
-    else if (message == "ALARM") { // Geste "Rock" (Avertissement simple)
-        digitalWrite(leds[1], HIGH); 
-    }
+    else if (message == "ALARM") digitalWrite(leds[1], HIGH); 
     else if (message == "FAN_ON") digitalWrite(leds[4], HIGH);
     else if (message == "CONFIRM") digitalWrite(leds[2], HIGH);
 
@@ -117,8 +128,6 @@ void callback(char* topic, byte* payload, unsigned int length) {
 
 void setup() {
   Serial.begin(115200);
-
-  // ASTUCE 2: CPU à 80MHz (Economie Energie)
   setCpuFrequencyMhz(80); 
 
   for(int i=0; i<5; i++) {
@@ -137,21 +146,29 @@ void setup() {
 }
 
 void loop() {
-  // 1. GESTION MQTT (Toujours active pour recevoir SOUND:OFF même pendant l'alarme)
+  // 1. GESTION MQTT (CRITIQUE: Doit tourner même en veille pour recevoir le réveil)
   if (!client.connected()) {
-    if (client.connect("ESP32_Tunisia_Final_V5")) { 
+    if (client.connect("ESP32_Tunisia_Final_V6")) { 
       client.subscribe(topic_sub);
     }
   }
   client.loop();
 
+  // SI EN VEILLE : On arrête le loop ici (On économise les calculs et capteurs)
+  if (isSleeping) {
+    return; 
+  }
+
+  // --- TOUT CE QUI SUIT NE TOURNE QUE SI LE SYSTEME EST REVEILLE ---
+
   // 2. LECTURE TEMPÉRATURE (Toutes les 1s)
   if (millis() - lastTempCheck > 1000) { 
     currentTemp = dht.readTemperature();
     lastTempCheck = millis(); 
-    Serial.print("T: "); Serial.print(currentTemp); Serial.print(" / Lim: "); Serial.println(tempLimit);
+    // Debug discret
+    // Serial.print("T: "); Serial.println(currentTemp); 
     
-    // Si la température redevient normale, on coupe tout
+    // Si la température redevient normale après alerte, on coupe tout
     if (currentTemp <= tempLimit && blinkState == HIGH) {
         for(int i=0; i<5; i++) digitalWrite(leds[i], LOW);
         noTone(BUZZER_PIN);
@@ -161,31 +178,31 @@ void loop() {
 
   // 3. LOGIQUE ALARME FEU (> Limite)
   if (currentTemp > tempLimit) {
-    lastActivity = millis(); // On reste éveillé
+    lastActivity = millis(); // L'alarme empêche la mise en veille
 
-    // Clignotement Rapide (200ms) - Non bloquant pour écouter MQTT
     if (millis() - lastBlink > 200) {
       lastBlink = millis();
-      blinkState = !blinkState; // Inverse ON/OFF
+      blinkState = !blinkState; 
 
-      // Action LEDs (Clignotent toutes)
       for(int i=0; i<5; i++) digitalWrite(leds[i], blinkState);
 
-      // Action Sonore (BIP BIP BIP)
-      // On sonne seulement si l'état est HIGH et que le mode silencieux est OFF
       if (blinkState == HIGH && !silent_mode) {
-        tone(BUZZER_PIN, 1000); // Son à 1000Hz
+        tone(BUZZER_PIN, 1000); 
       } else {
-        noTone(BUZZER_PIN);     // Silence
+        noTone(BUZZER_PIN);    
       }
     }
   }
 
-  // 4. ECONOMIE D'ENERGIE (Deep Sleep)
+  // 4. SMART SLEEP (Mise en veille logicielle)
   if (millis() - lastActivity > sleep_timeout) {
-    Serial.println("💤 Dodo (Deep Sleep)...");
+    Serial.println("💤 Inactivité détectée -> Passage en Mode Veille (Standby)");
+    Serial.println("   (Le WiFi reste actif. Faites le geste 'START' pour réveiller)");
+    
+    // Tout éteindre
     for(int i=0; i<5; i++) digitalWrite(leds[i], LOW);
     noTone(BUZZER_PIN);
-    esp_deep_sleep_start();
+    
+    isSleeping = true; // Activation du mode veille
   }
 }
